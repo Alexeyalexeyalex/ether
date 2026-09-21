@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Вход — Эфир{% endblock %}
+
+{% block body %}
+<div class="gate">
+  <aside class="gate__aside">
+    <div class="brand">
+      <span class="brand__dot"></span>
+      <span class="brand__mark">Эфир</span>
+    </div>
+
+    <div>
+      <h2 class="gate__lead">Голос,<br>текст и <b>экран</b></h2>
+      <p class="gate__text">
+        Комнаты с текстовыми и голосовыми каналами. Разговор идёт напрямую между
+        браузерами, сервер только соединяет участников.
+      </p>
+
+      <dl class="specs">
+        <div><span>Каналы</span><span>текст + голос</span></div>
+        <div><span>Трансляция экрана</span><span>до 1440p / 60 к·с</span></div>
+        <div><span>Доступ в комнату</span><span>открытый или по паролю</span></div>
+        <div><span>История чата</span><span>хранится в базе</span></div>
+      </dl>
+    </div>
+
+    <p class="eyebrow">Микрофон и захват экрана работают на localhost или по HTTPS</p>
+  </aside>
+
+  <main class="gate__form">
+    <form class="card" method="post" autocomplete="on">
+      <p class="eyebrow">Вход</p>
+      <h1>С возвращением</h1>
+      <p class="sub">Введите логин и пароль, чтобы вернуться в свои комнаты.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="flash flash--{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <div class="field">
+        <label for="username">Логин</label>
+        <input class="input" id="username" name="username" value="{{ username }}"
+               placeholder="admin" required autofocus autocomplete="username">
+      </div>
+
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input class="input" id="password" name="password" type="password"
+               placeholder="••••••••" required autocomplete="current-password">
+      </div>
+
+      <button class="btn btn--primary" type="submit">Войти</button>
+
+      <p class="alt">Ещё нет аккаунта? <a href="{{ url_for('auth.register') }}">Создать</a></p>
+    </form>
+
+    <form class="card" method="post" action="{{ url_for('auth.guest') }}" style="margin-top:-6px">
+      <p class="eyebrow" style="margin-bottom:10px">Или зайти разово</p>
+      <div class="field">
+        <label for="guest-name">Имя гостя</label>
+        <input class="input" id="guest-name" name="display_name" maxlength="48"
+               placeholder="необязательно">
+      </div>
+      <button class="btn btn--ghost" type="submit" style="width:100%">Войти как гость</button>
+      <p class="mono-note" style="margin:10px 0 0">
+        Гостевая учётка живёт неделю. В закрытые для гостей комнаты вход закрыт.
+      </p>
+    </form>
+  </main>
+</div>
+{% endblock %}

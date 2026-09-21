@@ -1,0 +1,83 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ meta.label }} — Эфир{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Таблица {{ table }}</p>
+    <h1>{{ meta.label }}</h1>
+  </div>
+  <div class="toolbar">
+    <form method="get" class="toolbar">
+      <input class="input" type="search" name="q" value="{{ search }}" placeholder="Поиск по таблице">
+      <button class="mini" type="submit">Найти</button>
+      {% if search %}<a class="mini" href="{{ url_for('admin.table_list', table=table) }}">Сбросить</a>{% endif %}
+    </form>
+    <a class="btn btn--primary" style="width:auto;padding:9px 16px"
+       href="{{ url_for('admin.row_create', table=table) }}">+ Новая запись</a>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel__head">
+    <span class="eyebrow">Найдено записей: {{ total }}</span>
+    <span class="eyebrow">Страница {{ page }} из {{ pages }}</span>
+  </div>
+
+  <div class="table-scroll">
+    <table class="grid">
+      <thead>
+        <tr>
+          {% for col in cols %}<th>{{ col.name }}</th>{% endfor %}
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            {% for col in cols %}
+              {% set value = field_value(row, col) %}
+              {% if value is sameas true %}
+                <td><span class="pill pill--yes">да</span></td>
+              {% elif value is sameas false %}
+                <td><span class="pill pill--no">нет</span></td>
+              {% elif col.name == 'id' or col.name.endswith('_id') %}
+                <td class="num">{{ value }}</td>
+              {% else %}
+                <td>{{ value if value|string|length <= 160 else value|string|truncate(160) }}</td>
+              {% endif %}
+            {% endfor %}
+            <td>
+              <div class="row-actions">
+                <a class="mini" href="{{ url_for('admin.row_edit', table=table, row_id=row.id) }}">Править</a>
+                <form method="post" action="{{ url_for('admin.row_delete', table=table, row_id=row.id) }}"
+                      onsubmit="return confirm('Удалить запись #{{ row.id }}? Связанные записи тоже пропадут.')">
+                  <input type="hidden" name="page" value="{{ page }}">
+                  <button class="mini mini--danger" type="submit">Удалить</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="{{ cols|length + 1 }}" style="color:var(--muted)">
+              Ничего не найдено{% if search %} по запросу «{{ search }}»{% endif %}.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pages > 1 %}
+    <div class="pager">
+      {% if page > 1 %}
+        <a class="mini" href="{{ url_for('admin.table_list', table=table, page=page-1, q=search) }}">← Назад</a>
+      {% endif %}
+      {% if page < pages %}
+        <a class="mini" href="{{ url_for('admin.table_list', table=table, page=page+1, q=search) }}">Вперёд →</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

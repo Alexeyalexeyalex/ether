@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Админ-панель — Эфир{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
+  <meta name="theme-color" content="#0b1114">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@200;300;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+</head>
+<body class="admin-body">
+<div class="admin">
+  <nav class="admin__nav">
+    <div class="brand">
+      <span class="brand__dot"></span>
+      <span class="brand__mark">Эфир</span>
+    </div>
+
+    <a class="nav-link {{ 'is-active' if request.endpoint == 'admin.dashboard' }}"
+       href="{{ url_for('admin.dashboard') }}">Сводка</a>
+
+    <p class="eyebrow nav-sep">Таблицы базы</p>
+    {% for key, meta in tables.items() %}
+      <a class="nav-link {{ 'is-active' if request.view_args and request.view_args.get('table') == key }}"
+         href="{{ url_for('admin.table_list', table=key) }}">
+        <span>{{ meta.label }}</span>
+      </a>
+    {% endfor %}
+
+    <p class="eyebrow nav-sep">Инструменты</p>
+    <a class="nav-link {{ 'is-active' if request.endpoint == 'admin.sql_console' }}"
+       href="{{ url_for('admin.sql_console') }}">SQL-консоль</a>
+
+    <div style="flex:1"></div>
+    <a class="nav-link" href="{{ url_for('views.app_page') }}">← В приложение</a>
+    <a class="nav-link" href="{{ url_for('auth.logout') }}">Выйти</a>
+  </nav>
+
+  <main class="admin__main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash flash--{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

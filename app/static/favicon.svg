@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Эфир">
+  <!-- Фирменный знак: полоски индикатора эфира. Три полосы с зазором в две
+       единицы сетки: на вкладке размером 16 пикселей зазор остаётся целым
+       пикселем и полосы не сливаются в пятно. Собственный тёмный фон
+       одинаково хорошо смотрится и на светлой, и на тёмной панели вкладок. -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16212a"/>
+      <stop offset="1" stop-color="#0b1114"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="32" height="32" rx="7.5" fill="url(#plate)"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="7" fill="none" stroke="#24343c"/>
+
+  <g fill="#ffb020">
+    <rect x="4.5"  y="11" width="5" height="10" rx="2.5" opacity="0.6"/>
+    <rect x="13.5" y="7"  width="5" height="18" rx="2.5"/>
+    <rect x="22.5" y="10" width="5" height="12" rx="2.5" opacity="0.8"/>
+  </g>
+</svg>

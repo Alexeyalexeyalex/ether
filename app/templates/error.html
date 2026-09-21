@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} — Эфир{% endblock %}
+
+{% block body %}
+<div class="error-page">
+  <div>
+    <div class="code">{{ code }}</div>
+    <p class="eyebrow" style="margin-bottom:22px">{{ message }}</p>
+    <a class="btn btn--ghost" href="{{ url_for('views.index') }}">Вернуться в приложение</a>
+  </div>
+</div>
+{% endblock %}

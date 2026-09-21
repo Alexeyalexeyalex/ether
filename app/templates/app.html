@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1114">
+  <title>Эфир</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="app-body">
+
+<div class="shell" id="shell">
+
+  <!-- ------------------------------------------------ комнаты -->
+  <nav class="rail" id="rail" aria-label="Комнаты">
+    <div class="rail__head">
+      <div class="brand">
+        <span class="brand__dot"></span>
+        <span class="brand__mark">Эфир</span>
+      </div>
+      <div class="brand-caption">Место для ваших разговоров</div>
+    </div>
+
+    <div class="rail__section">
+      <span class="eyebrow">Комнаты</span>
+      <div style="display:flex;gap:6px">
+        <button class="icon-btn" id="btn-new-folder" title="Создать папку"></button>
+        <button class="icon-btn" id="btn-new-room" title="Создать комнату">+</button>
+      </div>
+    </div>
+
+    <div class="rail__list" id="room-list"></div>
+
+    <div class="me-bar">
+      <button class="me-bar__open" id="btn-profile" title="Профиль">
+        <span id="me-avatar"></span>
+        <span class="me-bar__name">
+          <b id="me-name"></b>
+          <span id="me-login"></span>
+        </span>
+      </button>
+      {% if me.is_admin %}
+      <a class="icon-btn" href="{{ url_for('admin.dashboard') }}" title="Админ-панель" id="btn-admin"></a>
+      {% endif %}
+      <a class="icon-btn" href="{{ url_for('auth.logout') }}" title="Выйти из аккаунта" id="btn-logout"></a>
+    </div>
+  </nav>
+
+  <!-- ------------------------------------------------ каналы -->
+  <aside class="channels" id="channels">
+    <div class="channels__head">
+      <div class="channels__row">
+        <div class="channels__meta">
+          <div class="channels__title" id="room-title">Комната не выбрана</div>
+          <div class="channels__topic" id="room-topic">Выберите комнату слева</div>
+        </div>
+        <button class="icon-btn" id="btn-room-settings" title="Настройки комнаты" hidden></button>
+        <button class="icon-btn only-mobile" id="btn-close-nav" title="Закрыть">✕</button>
+      </div>
+      <div id="room-actions" class="channels__actions">
+        <button class="btn btn--ghost btn--slim" id="btn-new-channel">+ Канал</button>
+        <button class="btn btn--danger btn--slim" id="btn-room-quit">Выйти</button>
+      </div>
+    </div>
+
+    <div class="channels__list" id="channel-list"></div>
+  </aside>
+
+  <!-- ------------------------------------------------ центр -->
+  <main class="stage-column">
+    <header class="topbar">
+      <button class="icon-btn only-mobile" id="btn-menu" title="Комнаты и каналы">☰</button>
+      <div class="topbar__title">
+        <b id="channel-title">Начните здесь</b>
+        <span id="channel-hint"></span>
+      </div>
+      <div class="topbar__spacer"></div>
+      <button class="connection-pill" id="btn-connection" title="Проверить соединение"><i></i><span id="connection-label">Подключение…</span></button>
+      <button class="btn btn--ghost btn--slim" id="btn-quality" title="Качество трансляции">Качество</button>
+      <button class="icon-btn only-narrow" id="btn-people" title="Участники"></button>
+    </header>
+
+    <div class="connection-banner" id="connection-banner" role="status" hidden></div>
+    <div class="audio-banner" id="audio-banner" role="status" hidden>
+      <span>Браузер приостановил звук участников.</span>
+      <button class="btn btn--primary btn--slim" id="btn-enable-audio">Включить звук</button>
+    </div>
+    <div class="workspace" id="workspace">
+      <section class="broadcast" id="broadcast">
+        <div class="broadcast__bar">
+          <span class="eyebrow" id="broadcast-label">Трансляция</span>
+          <button class="btn btn--ghost btn--slim" id="btn-stage-wide">Развернуть</button>
+        </div>
+        <div class="broadcast__grid" id="broadcast-grid"></div>
+      </section>
+
+      <div class="chat" id="chat">
+        <div class="stream" id="stream" role="log" aria-label="Сообщения канала" aria-live="polite">
+          <div class="empty">
+            <div>
+              <h3>Выберите канал</h3>
+              <p class="mono-note">Текстовый — для переписки, голосовой — для разговора и трансляции</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="typing" id="typing"></div>
+
+        <div class="composer" id="composer" style="display:none">
+          <div class="composer__box">
+            <textarea id="input" rows="1" maxlength="2000" aria-label="Сообщение" placeholder="Написать сообщение…"></textarea>
+            <span class="composer__count" id="count"></span>
+            <button class="send-btn" id="btn-send" title="Отправить сообщение" aria-label="Отправить сообщение" disabled>↑</button>
+          </div>
+          <div class="composer__hint"><span>Разговор начинается с одного сообщения</span><span>Enter — отправить · Shift + Enter — новая строка</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- панель голосового канала -->
+    <div class="voicebar" id="voice-deck">
+      <div class="voicebar__status">
+        <span class="wave"><i></i><i></i><i></i><i></i></span>
+        <div class="voicebar__where">
+          <b id="voice-channel-name"></b>
+          <span id="voice-status-text" role="status">Подключение…</span>
+        </div>
+      </div>
+
+      <div class="voicebar__controls">
+        <button class="btn btn--slim" id="btn-mic">Микрофон</button>
+        <button class="btn btn--slim" id="btn-hand">Рука</button>
+        <button class="btn btn--slim" id="btn-share">Экран</button>
+        <label class="switch switch--pill" id="lock-switch" hidden>
+          <input type="checkbox" id="lock-toggle">
+          <span>Тишина</span>
+        </label>
+        <button class="btn btn--danger btn--slim" id="btn-hangup" title="Отключиться">Выйти</button>
+      </div>
+    </div>
+
+    <div class="lockbar" id="lockbar" hidden></div>
+  </main>
+
+  <!-- ------------------------------------------------ участники -->
+  <aside class="roster" id="roster">
+    <div class="roster__head">
+      <span class="eyebrow">Участники</span>
+      <span class="member-count" id="member-count">0</span>
+      <button class="icon-btn only-narrow" id="btn-close-roster" title="Закрыть">✕</button>
+    </div>
+    <div id="member-list"></div>
+  </aside>
+</div>
+
+<div class="backdrop" id="backdrop"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<div class="veil" id="modal-connection">
+  <div class="sheet">
+    <p class="eyebrow">Проверка связи</p>
+    <h2>Всё ли слышно?</h2>
+    <p class="sub">Состояние сервера, микрофона и соединений с участниками.</p>
+    <div id="connection-details" aria-live="polite"></div>
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Закрыть</button>
+      <button class="btn btn--ghost" id="btn-reconnect">Повторить соединение</button>
+      <button class="btn btn--primary" id="btn-refresh-connection">Обновить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ окно: участник -->
+<div class="veil" id="modal-user">
+  <div class="sheet">
+    <div class="usercard">
+      <div class="avatar avatar--lg" id="user-avatar"></div>
+      <div>
+        <h2 id="user-name" style="margin:0">Участник</h2>
+        <p class="mono-note" id="user-login"></p>
+      </div>
+    </div>
+
+    <div class="usercard__role">
+      <span class="role-badge" id="user-role">участник</span>
+    </div>
+
+    <div id="user-mod-block" class="field" hidden>
+      <label class="switch">
+        <input type="checkbox" id="user-moderator">
+        <span>Модератор комнаты</span>
+      </label>
+      <p class="mono-note" style="margin:6px 0 0">
+        Модератор создаёт каналы и может включить тишину в голосовом канале.
+      </p>
+    </div>
+
+    <div class="field" id="user-volume-block">
+      <label for="user-volume" id="user-volume-label">Громкость</label>
+      <div class="slider-row">
+        <input type="range" id="user-volume" min="0" max="200" step="5" value="100">
+        <span class="slider-value" id="user-volume-value">100%</span>
+      </div>
+      <p class="mono-note" id="user-volume-note" style="margin:8px 0 0"></p>
+    </div>
+
+    <div class="field" id="mic-sens-block" hidden>
+      <label for="mic-sens">Чувствительность микрофона</label>
+      <div class="slider-row">
+        <input type="range" id="mic-sens" min="0" max="100" step="1" value="70">
+        <span class="slider-value" id="mic-sens-value">70%</span>
+      </div>
+      <div class="level">
+        <div class="level__fill" id="mic-level"></div>
+        <i class="level__mark" id="mic-mark"></i>
+      </div>
+      <p class="mono-note" id="mic-sens-note" style="margin:8px 0 0">
+        Тише порога — микрофон молчит. Скажите что-нибудь: полоска зеленеет,
+        когда вас слышно. Янтарная метка — сам порог.
+      </p>
+    </div>
+
+    <div class="field" id="denoise-block" hidden>
+      <label for="denoise">Шумодав</label>
+      <div class="slider-row">
+        <input type="range" id="denoise" min="0" max="100" step="1" value="50">
+        <span class="slider-value" id="denoise-value">50%</span>
+      </div>
+      <p class="mono-note" id="denoise-note" style="margin:8px 0 0">
+        Убирает ровный фон: вентилятор, гул, шипение. Голос почти не задевает.
+        На максимуме звук может стать «подводным» — тогда сбавьте.
+      </p>
+    </div>
+
+    <div class="field" id="user-bans-block" hidden>
+      <label>Запрет на вход в голосовые</label>
+      <div id="user-bans"></div>
+    </div>
+
+    <div class="field" id="user-kick-block" hidden>
+      <label>Голосовой канал</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn--ghost btn--slim" id="user-boot" style="flex:1">Выгнать</button>
+        <button class="btn btn--danger btn--slim" id="user-kick" style="flex:1">Исключить</button>
+      </div>
+      <p class="mono-note" style="margin:8px 0 0">
+        «Выгнать» просто выставляет за дверь — вернуться можно сразу.
+        «Исключить» вдобавок закрывает вход, снять запрет можно здесь же.
+      </p>
+    </div>
+
+    <div class="field" id="user-remove-block" hidden>
+      <button class="btn btn--danger" id="user-remove" style="width:100%">
+        Убрать из комнаты
+      </button>
+      <p class="mono-note" style="margin:8px 0 0">
+        Не навсегда: открытую комнату человек откроет заново сам,
+        в закрытую войдёт по паролю.
+      </p>
+    </div>
+
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ окно: новая комната -->
+<div class="veil" id="modal-room">
+  <div class="sheet">
+    <p class="eyebrow">Новая комната</p>
+    <h2>Своя частота</h2>
+    <p class="sub">Вы станете владельцем: сможете назначать модераторов и удалить комнату.</p>
+
+    <div class="field">
+      <label for="room-name">Название</label>
+      <input class="input" id="room-name" maxlength="64" placeholder="Например: Проект Заря">
+    </div>
+
+    <div class="field">
+      <label for="room-topic-input">Описание</label>
+      <input class="input" id="room-topic-input" maxlength="160" placeholder="Необязательно">
+    </div>
+
+    <label class="switch" style="margin:6px 0 10px">
+      <input type="checkbox" id="room-locked">
+      <span>Закрыть паролем</span>
+    </label>
+
+    <label class="switch" style="margin:0 0 14px">
+      <input type="checkbox" id="room-guests" checked>
+      <span>Пускать гостей</span>
+    </label>
+
+    <div class="field" id="room-password-field" style="display:none">
+      <label for="room-password">Пароль комнаты</label>
+      <input class="input" id="room-password" type="text" maxlength="64" placeholder="от 4 символов">
+    </div>
+
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Отмена</button>
+      <button class="btn btn--primary" id="room-create">Создать комнату</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ окно: профиль -->
+<div class="veil" id="modal-profile">
+  <div class="sheet">
+    <p class="eyebrow">Профиль</p>
+    <h2>Как вас видят другие</h2>
+
+    <div class="usercard">
+      <div id="profile-avatar"></div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;gap:8px;flex-wrap:wrap" id="avatar-tools">
+          <button class="btn btn--ghost btn--slim" id="btn-avatar-pick">Загрузить фото</button>
+          <button class="btn btn--ghost btn--slim" id="btn-avatar-drop">Убрать</button>
+        </div>
+        <p class="mono-note" style="margin:8px 0 0" id="avatar-note">
+          Картинка ужимается до 256×256 и лежит файлом на сервере.
+          Прежняя стирается сразу же.
+        </p>
+      </div>
+    </div>
+    <input type="file" id="avatar-input" accept="image/png,image/jpeg,image/gif" hidden>
+
+    <div class="field">
+      <label for="profile-name">Имя в чате</label>
+      <input class="input" id="profile-name" maxlength="48">
+    </div>
+
+    <div class="field">
+      <label>Цвет подписи</label>
+      <div class="seg" id="profile-colors"></div>
+    </div>
+
+    <details class="details" id="password-block">
+      <summary>Сменить пароль</summary>
+      <div class="field" style="margin-top:14px">
+        <label for="profile-current">Текущий пароль</label>
+        <input class="input" id="profile-current" type="password" autocomplete="current-password">
+      </div>
+      <div class="field">
+        <label for="profile-new">Новый пароль</label>
+        <input class="input" id="profile-new" type="password" autocomplete="new-password"
+               placeholder="от 6 символов">
+      </div>
+      <div class="field">
+        <label for="profile-repeat">Ещё раз</label>
+        <input class="input" id="profile-repeat" type="password" autocomplete="new-password">
+      </div>
+    </details>
+
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Отмена</button>
+      <button class="btn btn--primary" id="profile-save">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ окно: ввод строки -->
+<div class="veil" id="modal-prompt">
+  <div class="sheet">
+    <p class="eyebrow" id="prompt-eyebrow">Название</p>
+    <h2 id="prompt-title">Введите название</h2>
+    <div class="field" style="margin-top:16px">
+      <label for="prompt-input" id="prompt-label">Название</label>
+      <input class="input" id="prompt-input" maxlength="64">
+    </div>
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Отмена</button>
+      <button class="btn btn--primary" id="prompt-save">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ окно: настройки комнаты -->
+<div class="veil" id="modal-settings">
+  <div class="sheet">
+    <p class="eyebrow">Настройки комнаты</p>
+    <h2>Название и доступ</h2>
+    <p class="sub">Видно только владельцу комнаты и админу сайта.</p>
+
+    <div class="field">
+      <label for="settings-name">Название</label>
+      <input class="input" id="settings-name" maxlength="64">
+      <p class="mono-note" style="margin:6px 0 0">Названия комнат не повторяются.</p>
+    </div>
+
+    <div class="field">
+      <label for="settings-topic">Описание</label>
+      <input class="input" id="settings-topic" maxlength="160" placeholder="Необязательно">
+    </div>
+
+    <label class="switch" style="margin:6px 0 10px">
+      <input type="checkbox" id="settings-locked">
+      <span>Вход по паролю</span>
+    </label>
+
+    <label class="switch" style="margin:0 0 14px">
+      <input type="checkbox" id="settings-guests">
+      <span>Пускать гостей</span>
+    </label>
+
+    <div class="field" id="settings-password-field" hidden>
+      <label for="settings-password">Новый пароль</label>
+      <input class="input" id="settings-password" type="text" maxlength="64" autocomplete="off">
+      <p class="mono-note" id="settings-password-note" style="margin:6px 0 0"></p>
+    </div>
+
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Отмена</button>
+      <button class="btn btn--primary" id="settings-save">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ окно: пароль -->
+<div class="veil" id="modal-password">
+  <div class="sheet">
+    <p class="eyebrow">Закрытая комната</p>
+    <h2 id="password-room-name">Нужен пароль</h2>
+    <p class="sub">Спросите пароль у того, кто создал комнату.</p>
+
+    <div class="field">
+      <label for="join-password">Пароль</label>
+      <input class="input" id="join-password" type="password" autocomplete="off">
+    </div>
+
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Отмена</button>
+      <button class="btn btn--primary" id="password-submit">Войти в комнату</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ окно: новый канал -->
+<div class="veil" id="modal-channel">
+  <div class="sheet">
+    <p class="eyebrow">Новый канал</p>
+    <h2>Добавить канал</h2>
+    <p class="sub">Текстовый хранит переписку, голосовой — для разговора и показа экрана.</p>
+
+    <div class="field">
+      <label>Тип</label>
+      <div class="seg" id="channel-kind">
+        <button class="is-on" data-kind="text"># текстовый</button>
+        <button data-kind="voice">голосовой</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="channel-name">Название</label>
+      <input class="input" id="channel-name" maxlength="48" placeholder="общий">
+    </div>
+
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Отмена</button>
+      <button class="btn btn--primary" id="channel-create">Создать канал</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ окно: качество -->
+<div class="veil" id="modal-quality">
+  <div class="sheet sheet--wide">
+    <p class="eyebrow">Трансляция экрана</p>
+    <h2>Качество картинки</h2>
+    <p class="sub">Меняется на лету — переключать можно прямо во время показа.</p>
+
+    <div class="quality-list" id="quality-list"></div>
+
+    <div class="field" style="margin-top:22px">
+      <label>Звук с экрана</label>
+      <div class="seg" id="screen-audio">
+        <button data-audio="off">Не передавать</button>
+        <button class="is-on" data-audio="duck">Приглушать при речи</button>
+        <button data-audio="raw">Передавать как есть</button>
+      </div>
+      <p class="mono-note" id="screen-audio-note" style="margin:8px 0 0"></p>
+    </div>
+
+    <div class="hint">
+      Чем выше битрейт, тем чётче мелкий текст, но тем больше нагрузка на канал.
+      Если картинка рассыпается — снизьте на ступень.
+    </div>
+
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" data-close>Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<script>window.ME = {{ me | tojson }};</script>
+<script src="{{ url_for('static', filename='vendor/socket.io.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/rtc.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

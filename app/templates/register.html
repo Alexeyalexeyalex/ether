@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Регистрация — Эфир{% endblock %}
+
+{% block body %}
+<div class="gate">
+  <aside class="gate__aside">
+    <div class="brand">
+      <span class="brand__dot"></span>
+      <span class="brand__mark">Эфир</span>
+    </div>
+
+    <div>
+      <h2 class="gate__lead">Заведите <b>позывной</b></h2>
+      <p class="gate__text">
+        Логин виден в базе, имя — в чате и списке участников. Имя можно поменять
+        в любой момент, логин остаётся навсегда.
+      </p>
+
+      <dl class="specs">
+        <div><span>Логин</span><span>3–32 символа, латиница</span></div>
+        <div><span>Пароль</span><span>от 6 символов</span></div>
+        <div><span>Вложения в чате</span><span>не поддерживаются</span></div>
+      </dl>
+    </div>
+
+    <p class="eyebrow">Комнату можно создать сразу после входа</p>
+  </aside>
+
+  <main class="gate__form">
+    <form class="card" method="post" autocomplete="on">
+      <p class="eyebrow">Регистрация</p>
+      <h1>Новый участник</h1>
+      <p class="sub">Четыре поля — и можно занимать частоту.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="flash flash--{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <div class="field">
+        <label for="username">Логин</label>
+        <input class="input" id="username" name="username" value="{{ username }}"
+               placeholder="alex" required autofocus autocomplete="username">
+      </div>
+
+      <div class="field">
+        <label for="display_name">Имя в чате</label>
+        <input class="input" id="display_name" name="display_name" value="{{ display_name }}"
+               placeholder="Алексей" maxlength="48" autocomplete="nickname">
+      </div>
+
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input class="input" id="password" name="password" type="password"
+               placeholder="от 6 символов" required autocomplete="new-password">
+      </div>
+
+      <div class="field">
+        <label for="confirm">Пароль ещё раз</label>
+        <input class="input" id="confirm" name="confirm" type="password"
+               required autocomplete="new-password">
+      </div>
+
+      <button class="btn btn--primary" type="submit">Создать аккаунт</button>
+
+      <p class="alt">Уже зарегистрированы? <a href="{{ url_for('auth.login') }}">Войти</a></p>
+    </form>
+  </main>
+</div>
+{% endblock %}

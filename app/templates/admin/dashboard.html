@@ -1,0 +1,80 @@
+{% extends "admin/base.html" %}
+{% block title %}Сводка — Эфир{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Админ-панель</p>
+    <h1>Состояние базы</h1>
+  </div>
+  <a class="btn btn--ghost" href="{{ url_for('admin.sql_console') }}">Открыть SQL-консоль</a>
+</div>
+
+<div class="tiles">
+  {% for item in stats %}
+    <a class="tile" href="{{ url_for('admin.table_list', table=item.key) }}">
+      <b>{{ item.count }}</b>
+      <span class="eyebrow">{{ item.label }}</span>
+    </a>
+  {% endfor %}
+</div>
+
+<div class="panel">
+  <div class="panel__head">
+    <span class="eyebrow">Последние сообщения</span>
+    <a class="mini" href="{{ url_for('admin.table_list', table='messages') }}">Все сообщения</a>
+  </div>
+  <div class="table-scroll">
+    <table class="grid">
+      <thead>
+        <tr><th>ID</th><th>Автор</th><th>Канал</th><th>Текст</th><th>Когда</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for message in recent %}
+          <tr>
+            <td class="num">{{ message.id }}</td>
+            <td>{{ message.author.username if message.author else '—' }}</td>
+            <td>{{ message.channel.name if message.channel else '—' }}</td>
+            <td>{{ message.content[:90] }}{{ '…' if message.content|length > 90 }}</td>
+            <td class="num">{{ message.created_at.strftime('%d.%m %H:%M') }}</td>
+            <td class="row-actions">
+              <a class="mini" href="{{ url_for('admin.row_edit', table='messages', row_id=message.id) }}">Править</a>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" style="color:var(--muted)">Сообщений пока нет</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel__head">
+    <span class="eyebrow">Новые пользователи</span>
+    <a class="mini" href="{{ url_for('admin.row_create', table='users') }}">Добавить пользователя</a>
+  </div>
+  <div class="table-scroll">
+    <table class="grid">
+      <thead>
+        <tr><th>ID</th><th>Логин</th><th>Имя</th><th>Права</th><th>Статус</th><th>Регистрация</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for user in newcomers %}
+          <tr>
+            <td class="num">{{ user.id }}</td>
+            <td>{{ user.username }}</td>
+            <td>{{ user.display_name }}</td>
+            <td>{% if user.is_admin %}<span class="pill pill--yes">админ</span>{% else %}<span class="pill pill--no">обычный</span>{% endif %}</td>
+            <td>{% if user.is_banned %}<span class="pill" style="border-color:#4a2226;color:#ff8a86">заблокирован</span>{% else %}<span class="pill pill--no">активен</span>{% endif %}</td>
+            <td class="num">{{ user.created_at.strftime('%d.%m.%Y') }}</td>
+            <td class="row-actions">
+              <a class="mini" href="{{ url_for('admin.row_edit', table='users', row_id=user.id) }}">Править</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

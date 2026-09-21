@@ -1,0 +1,58 @@
+{% extends "admin/base.html" %}
+{% block title %}SQL-консоль — Эфир{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Инструменты</p>
+    <h1>SQL-консоль</h1>
+  </div>
+</div>
+
+<form method="post" class="panel" style="padding:20px">
+  <p class="eyebrow" style="margin-bottom:10px">Запрос</p>
+  <textarea class="sql-box" name="sql" id="sql"
+            placeholder="SELECT id, username, is_admin FROM users ORDER BY id DESC LIMIT 20;">{{ sql }}</textarea>
+
+  <div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
+    <button class="btn btn--primary" style="width:auto;padding:10px 20px" type="submit">Выполнить</button>
+    <span class="mono-note">SELECT возвращает до 300 строк. Любые изменения применяются сразу и необратимы.</span>
+  </div>
+
+  <p class="eyebrow" style="margin:22px 0 0">Схема базы — нажмите, чтобы подставить</p>
+  <div class="schema">
+    {% for table, columns in schema.items() %}
+      <code data-sql="SELECT {{ columns|join(', ') }} FROM {{ table }} LIMIT 50;">{{ table }} ({{ columns|length }})</code>
+    {% endfor %}
+  </div>
+</form>
+
+{% if info %}
+  <div class="panel">
+    <div class="result-note">{{ info }}</div>
+    {% if columns %}
+      <div class="table-scroll">
+        <table class="grid">
+          <thead>
+            <tr>{% for column in columns %}<th>{{ column }}</th>{% endfor %}</tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>{% for cell in row %}<td>{{ cell if cell is not none else '—' }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
+
+<script>
+  document.querySelectorAll('.schema code').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      document.getElementById('sql').value = chip.dataset.sql;
+      document.getElementById('sql').focus();
+    });
+  });
+</script>
+{% endblock %}

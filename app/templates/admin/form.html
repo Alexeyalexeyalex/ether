@@ -1,0 +1,68 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ 'Правка' if row else 'Новая запись' }} — Эфир{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">{{ meta.label }} · {{ table }}</p>
+    <h1>{{ 'Запись #' ~ row.id if row else 'Новая запись' }}</h1>
+  </div>
+  <a class="btn btn--ghost" href="{{ url_for('admin.table_list', table=table) }}">← К списку</a>
+</div>
+
+<form method="post" class="panel" style="padding:22px">
+  <div class="form-grid">
+    {% for col in cols %}
+      {% if col.name != 'password_hash' %}
+        {% set current = form.get(col.name) if form else None %}
+        {% set value = current if current is not none else (field_value(row, col) if row else (col.default.arg if col.default and col.default.is_scalar else '')) %}
+        <div class="field">
+          <label for="f-{{ col.name }}">{{ col.name }}</label>
+
+          {% if col.type.__class__.__name__ == 'Boolean' %}
+            <label class="switch">
+              <input type="checkbox" id="f-{{ col.name }}" name="{{ col.name }}"
+                     {{ 'checked' if value is sameas true or value == 'on' }}>
+              <span>{{ 'включено' if value is sameas true else 'выключено' }}</span>
+            </label>
+          {% elif col.type.__class__.__name__ == 'Text' %}
+            <textarea class="input" id="f-{{ col.name }}" name="{{ col.name }}">{{ value }}</textarea>
+          {% else %}
+            <input class="input" id="f-{{ col.name }}" name="{{ col.name }}" value="{{ value }}"
+                   {% if col.type.__class__.__name__ == 'Integer' %}inputmode="numeric"{% endif %}>
+          {% endif %}
+
+          <div class="col-note">
+            {{ col.type }}{{ ' · может быть пустым' if col.nullable else ' · обязательное' }}
+            {%- for fk in col.foreign_keys %} · ссылка на {{ fk.target_fullname }}{% endfor %}
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    {% if table == 'users' %}
+      <div class="field">
+        <label for="f-password">Новый пароль</label>
+        <input class="input" id="f-password" name="__password" type="text"
+               placeholder="{{ 'оставьте пустым, чтобы не менять' if row else 'задайте пароль' }}"
+               autocomplete="new-password">
+        <div class="col-note">Хранится в виде хеша — прежний пароль посмотреть нельзя</div>
+      </div>
+    {% endif %}
+
+    {% if table == 'rooms' %}
+      <div class="hint" style="border-left:2px solid var(--signal-dim);padding:11px 13px;background:#10161a">
+        Пароль комнаты меняется в самом приложении. Чтобы снять пароль, очистите поле
+        password_hash — комната станет открытой.
+      </div>
+    {% endif %}
+  </div>
+
+  <div style="display:flex;gap:10px;margin-top:24px">
+    <button class="btn btn--primary" style="width:auto;padding:11px 22px" type="submit">
+      {{ 'Сохранить изменения' if row else 'Создать запись' }}
+    </button>
+    <a class="btn btn--ghost" href="{{ url_for('admin.table_list', table=table) }}">Отмена</a>
+  </div>
+</form>
+{% endblock %}
