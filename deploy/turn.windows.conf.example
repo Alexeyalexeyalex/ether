@@ -1,0 +1,19 @@
+# For the Ubuntu 22.04 coturn package in WSL 1 (coturn 4.5/4.6).
+# Replace BOTH IPs and the shared secret before starting.
+# 192.168.1.50 = laptop LAN IP; 203.0.113.10 = router public IPv4 (example only).
+listening-port=3478
+listening-ip=192.168.1.50
+relay-ip=192.168.1.50
+external-ip=203.0.113.10/192.168.1.50
+min-port=49160
+max-port=49260
+fingerprint
+use-auth-secret
+static-auth-secret=REPLACE_WITH_A_LONG_RANDOM_SECRET
+realm=xn--h1aqk9a.space
+no-tls
+no-dtls
+no-cli
+no-multicast-peers
+# For coturn 4.18+, remove no-dtls and no-cli (both are disabled by default).
+# TLS setup for restrictive networks is described in WINDOWS_TURN.md.

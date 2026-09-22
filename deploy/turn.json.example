@@ -1,0 +1,7 @@
+{
+  "urls": [
+    "turn:xn--h1aqk9a.space:3478?transport=udp",
+    "turn:xn--h1aqk9a.space:3478?transport=tcp"
+  ],
+  "secret": "REPLACE_WITH_THE_SAME_STATIC_AUTH_SECRET_AS_COTURN"
+}

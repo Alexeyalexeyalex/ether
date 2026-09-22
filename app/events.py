@@ -1,12 +1,13 @@
 """Реальное время: чат, присутствие в голосовых каналах, сигналинг WebRTC.
 
-Голос и демонстрация экрана идут по WebRTC напрямую между браузерами (mesh).
-Сервер только знакомит участников друг с другом, передаёт SDP/ICE и держит
-права: кто владелец, кто модератор, включена ли тишина в канале.
+Основной маршрут медиа — WebRTC между браузерами (mesh). Недоступные пары
+используют резервную пересылку через app.relay по соединению сайта.
+Этот модуль хранит каналы, присутствие, права и сигналинг SDP/ICE.
 """
 
 import threading
 import time
+import secrets
 
 from flask import current_app, request
 from flask_login import current_user
@@ -196,6 +197,8 @@ def release_lock(channel_id: int, room_id: int) -> None:
 
 def drop_from_voice(sid: str) -> None:
     with lock:
+        from .relay import forget
+        forget(sid)
         info = sid_voice.pop(sid, None)
         if not info:
             return
@@ -392,6 +395,7 @@ def on_voice_join(data):
         "sharing": False,
         "hand": False,
         "quality": None,
+        "relay_version": 1 if data.get("relay_version") == 1 else 0,
     }
 
     # Снимок участников и добавление себя — одной операцией, иначе при
@@ -403,6 +407,7 @@ def on_voice_join(data):
             "channel_id": channel_id,
             "room_id": channel.room_id,
             "user_id": current_user.id,
+            "epoch": secrets.token_urlsafe(16),
         }
     join_room(f"voice:{channel_id}")
 
@@ -411,6 +416,7 @@ def on_voice_join(data):
         "channel_id": channel_id,
         "peers": existing,
         "self_sid": request.sid,
+        "epoch": sid_voice[request.sid]["epoch"],
         "role": role,
         "lock": lock_payload(channel_id),
     })
@@ -448,6 +454,10 @@ def on_voice_state(data):
         for key in ("muted", "sharing", "quality"):
             if key in data:
                 state[key] = data[key]
+
+        if not state.get("sharing"):
+            from .relay import stop_screen
+            stop_screen(request.sid)
 
         # Тишину нельзя обойти, отправив muted=false
         if muted_by_lock(channel_id, state["user_id"], state["role"]):

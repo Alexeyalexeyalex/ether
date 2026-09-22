@@ -1,4 +1,4 @@
-"""No available ICE route: failures must be visible, retry bounded, cleanup complete.
+"""Compatibility with a server without fallback: bounded, visible ICE failure.
 
 All sessions and requests use the disposable localhost:2080 test server.
 """
@@ -17,6 +17,12 @@ with sync_playwright() as p:
     try:
         for name in ["alice", "boris"]:
             context = browser.new_context(permissions=["microphone"])
+            def old_config(route):
+                response = route.fetch()
+                data = response.json()
+                data["serverRelay"] = False
+                route.fulfill(response=response, json=data)
+            context.route("**/api/rtc-config", old_config)
             # Use a real RTCPeerConnection with no allowed route, not a mock state.
             context.add_init_script("""const NativePeer = window.RTCPeerConnection;
               window.RTCPeerConnection = class extends NativePeer {

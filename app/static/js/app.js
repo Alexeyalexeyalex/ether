@@ -1595,8 +1595,10 @@
         video.play().catch(function () { /* автозапуск подождёт */ });
       }
       const preset = RTC.QUALITY[peer.quality] || null;
+      const relayed = !isSelf && (RTC.peers.get(peer.sid) || {}).relay;
       tile.querySelector('.screen__label span').textContent =
-        (isSelf ? 'Ваш экран' : peer.display_name) + (preset ? ' · ' + preset.label.toLowerCase() : '');
+        (isSelf ? 'Ваш экран' : peer.display_name) +
+        (relayed ? ' · через сервер' : preset ? ' · ' + preset.label.toLowerCase() : '');
     });
 
     const on = peers.length > 0;
@@ -1636,6 +1638,7 @@
   // ------------------------------------------------------------- качество
 
   function renderQuality() {
+    $('relay-quality-note').hidden = !RTC.connectionSummary().relayed;
     $('quality-list').innerHTML = Object.keys(RTC.QUALITY).map(function (key) {
       const preset = RTC.QUALITY[key];
       let bars = '';
@@ -2060,7 +2063,7 @@
     const status = summary.failed ? 'Связь не установлена'
       : !summary.total ? 'Ждём собеседника'
       : summary.connected < summary.total ? 'Соединяем участников…'
-      : 'На связи · ' + (summary.connected + 1) + ' участника';
+      : 'На связи · ' + (summary.connected + 1) + ' участника' + (summary.relayed ? ' · через сервер' : '');
     $('voice-status-text').textContent = status + (RTC.hasMic() ? '' : ' · только слушаю');
     $('voice-deck').classList.toggle('has-error', summary.failed);
   }
@@ -2081,17 +2084,20 @@
       box.innerHTML = row('Сервер', d.signaling ? 'Подключён' : 'Нет связи', d.signaling) +
         row('Микрофон', d.microphone ? (d.muted ? 'Выключен' : 'Включён') : 'Не используется', d.microphone && !d.muted) +
         row('Воспроизведение', d.blockedAudio ? 'Нажмите «Включить звук»' : 'Разрешено', !d.blockedAudio) +
-        (RTC.channelId ? row('Резервный маршрут (TURN)', d.hasTurn ? 'Настроен' : 'Не настроен', d.hasTurn) : '') +
+        (RTC.channelId ? row('Связь через сервер', d.serverRelay ? 'Доступна автоматически' : 'Недоступна', d.serverRelay) : '') +
+        (RTC.channelId && d.hasTurn ? row('TURN', 'Настроен', true) : '') +
         d.peers.map(function (peer) {
           const member = state.members.find(function (m) { return m.id === peer.userId; });
           const label = peer.state === 'connected' ? 'Связь установлена' : peer.failed || peer.state === 'failed' ? 'Нет связи' : 'Подключение…';
           return '<div class="diagnostic-peer">' + row(member ? member.display_name : 'Участник', label, peer.state === 'connected') +
             '<p class="mono-note">Получено аудиопакетов: ' + peer.packets +
             (peer.rtt !== null ? ' · задержка ' + peer.rtt + ' мс' : '') +
-            (peer.route === 'relay' ? ' · через TURN' : peer.route !== '—' ? ' · напрямую' : '') + '</p></div>';
+            (peer.route === 'server' ? ' · через сервер' : peer.route === 'relay' ? ' · через TURN' : peer.route !== '—' ? ' · напрямую' : '') +
+            (peer.route === 'server' && peer.frames ? ' · кадров экрана: ' + peer.frames : '') + '</p></div>';
         }).join('') +
         '<p class="hint">' + esc(d.lastError || (!RTC.channelId ? 'Зайдите в голосовой канал, чтобы проверить связь с участниками.' :
-          !d.hasTurn ? 'В некоторых сетях прямой звонок недоступен. Администратор может подключить TURN для передачи звука через сервер.' :
+          d.serverRelay ? 'Если прямой маршрут недоступен, голос и экран автоматически передаются через сервер сайта. В резервном режиме экран — до 720p и 5 кадров/с.' :
+          !d.hasTurn ? 'В этой версии сервера нет резервной передачи. Обновите приложение или подключите TURN.' :
           'Если звука нет, проверьте громкость участника и разрешение микрофона в браузере.')) + '</p>';
       $('btn-reconnect').disabled = !RTC.channelId || !d.peers.length;
     } catch (err) { box.textContent = 'Не удалось прочитать состояние соединения. Повторите проверку.'; }

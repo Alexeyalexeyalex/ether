@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 from pathlib import Path
 import sys
@@ -16,6 +17,16 @@ from app import create_app, socketio
 from app import events
 from app.models import Channel, Membership, Message, Room, User, VoiceBan, db
 from app.settings import _sane
+from app import rtc_config
+from app import relay
+
+
+@pytest.fixture(autouse=True)
+def isolated_turn_settings(monkeypatch, tmp_path):
+    for key in ("URLS", "SECRET", "USERNAME", "CREDENTIAL"):
+        monkeypatch.delenv("EFIR_TURN_" + key, raising=False)
+    monkeypatch.setattr(rtc_config, "TURN_CONFIG_FILE", tmp_path / "turn.json")
+    monkeypatch.setattr(rtc_config, "load_settings", lambda: {"ice_servers": []})
 
 
 @pytest.fixture()
@@ -54,6 +65,8 @@ def site():
         db.drop_all()
         db.engine.dispose()
     for table in [events.voice_rooms, events.sid_voice, events.mic_locks, events.online_sids, events.guest_left_at]:
+        table.clear()
+    for table in (relay.links, relay.outboxes, relay.rates):
         table.clear()
 
 
@@ -139,6 +152,57 @@ def test_invalid_ice_settings_are_ignored():
     assert config["ice_servers"] == [{"urls": ["stun:stun.example.com"]}]
 
 
+def test_private_turn_file_with_windows_bom_and_hot_reload(site, monkeypatch):
+    app, connect = site
+    monkeypatch.setattr(rtc_config.time, "time", lambda: 1800000000)
+    config_file = Path(rtc_config.TURN_CONFIG_FILE)
+    config_file.write_text(json.dumps({"urls": ["turn:relay.example.com:3478"],
+                                       "secret": "private-test-secret"}), encoding="utf-8-sig")
+    http, _, _ = connect("alice")
+    response = http.get("/api/rtc-config")
+    entry = response.json["iceServers"][-1]
+    assert response.json["hasTurn"] is True
+    assert entry["username"] == "1800086400:1"
+    assert entry["credential"] == base64.b64encode(hmac.new(
+        b"private-test-secret", b"1800086400:1", hashlib.sha1).digest()).decode()
+    assert b"private-test-secret" not in response.data
+    assert response.headers["Cache-Control"] == "no-store"
+    assert app.test_client().get("/api/rtc-config").status_code == 302
+    config_file.write_text(json.dumps({"urls": "turns:relay.example.com:5349", "username": "test-user",
+                                       "credential": "test-password"}), encoding="utf-8")
+    assert http.get("/api/rtc-config").json["iceServers"][-1] == {
+        "urls": ["turns:relay.example.com:5349"], "username": "test-user", "credential": "test-password"}
+
+
+def test_turn_environment_replaces_whole_private_config(monkeypatch):
+    Path(rtc_config.TURN_CONFIG_FILE).write_text(json.dumps({"urls": ["turn:file.example.com"],
+                                                           "secret": "file-secret"}), encoding="utf-8")
+    monkeypatch.setenv("EFIR_TURN_URLS", "turn:env.example.com")
+    # Do not accidentally use the file's secret for an unrelated environment URL.
+    assert rtc_config.ice_config(1)["hasTurn"] is False
+    monkeypatch.setenv("EFIR_TURN_USERNAME", "env-user")
+    monkeypatch.setenv("EFIR_TURN_CREDENTIAL", "env-password")
+    assert rtc_config.ice_config(1)["iceServers"][-1] == {
+        "urls": ["turn:env.example.com"], "username": "env-user", "credential": "env-password"}
+    monkeypatch.setenv("EFIR_TURN_URLS", "")
+    assert rtc_config.ice_config(1)["hasTurn"] is False
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"secret":"do-not-log-this",', b'[]', b'\xff', b'{"urls":7}',
+    b'{"urls":[null,7,"https://bad"],"secret":"do-not-log-this"}',
+    b'{"urls":"turn:relay.example.com","secret":7}',
+    b'{"urls":"turn:relay.example.com","username":true,"credential":"do-not-log-this"}',
+    b'{"urls":"turn:relay.example.com"}',
+])
+def test_broken_private_turn_file_does_not_crash_or_leak(raw, caplog):
+    Path(rtc_config.TURN_CONFIG_FILE).write_bytes(raw)
+    config = rtc_config.ice_config(1)
+    assert config["hasTurn"] is False
+    assert config["iceServers"] == rtc_config.DEFAULT_ICE_SERVERS
+    assert "do-not-log-this" not in caplog.text
+
+
 def test_kick_leaves_voice_subscription(site):
     _, connect = site
     _, owner, _ = connect("alice")
@@ -196,3 +260,139 @@ def test_moderator_silence_enforced(site):
     assert events.voice_rooms[2][sid]["muted"] is True
     owner.emit("voice_leave")
     assert 2 not in events.mic_locks
+
+
+def relay_pair(connect):
+    _, alice, alice_sid = connect("alice")
+    _, boris, boris_sid = connect("boris")
+    for ws in (alice, boris):
+        assert ws.emit("voice_join", {"channel_id": 2, "relay_version": 1}, callback=True)["ok"]
+        ws.get_received()
+    assert alice.emit("relay_start", {"to": boris_sid, "channel_id": 2}, callback=True)["ok"]
+    token = next(e["args"][0]["token"] for e in alice.get_received() if e["name"] == "relay_started")
+    for ws, target in ((alice, boris_sid), (boris, alice_sid)):
+        ws.emit("relay_ready", {"to": target, "channel_id": 2, "token": token})
+    for ws in (alice, boris):
+        assert any(e["name"] == "relay_connected" for e in ws.get_received())
+    return alice, alice_sid, boris, boris_sid
+
+
+def audio_packet(sid, seq=0, **changes):
+    return {"channel_id": 2, "epoch": events.sid_voice[sid]["epoch"], "kind": "mic",
+            "seq": seq, "data": base64.b64encode(b"\x01\x00" * 960).decode(), **changes}
+
+
+def media_packets(ws):
+    return [e["args"][0] for e in ws.get_received() if e["name"] == "relay_media"]
+
+
+def test_relay_routes_audio_only_to_ready_channel_peers_and_cleans_on_switch(site):
+    _, connect = site
+    alice, source, boris, target = relay_pair(connect)
+    _, outsider, _ = connect("outsider")
+    alice.emit("relay_publish", audio_packet(source))
+    packet = media_packets(boris)[0]
+    assert packet["from"] == source and packet["channel_id"] == 2
+    assert packet["packets"][0]["seq"] == 0
+    assert not media_packets(alice) and not media_packets(outsider)
+    old_epoch = events.sid_voice[source]["epoch"]
+    boris.emit("voice_join", {"channel_id": 3, "relay_version": 1}, callback=True)
+    assert not relay.links and not relay.outboxes
+    alice.emit("relay_publish", audio_packet(source, 1))
+    assert not media_packets(boris)
+    alice.emit("voice_leave")
+    alice.emit("voice_join", {"channel_id": 2, "relay_version": 1}, callback=True)
+    assert events.sid_voice[source]["epoch"] != old_epoch
+    assert not relay.rates
+
+
+def test_relay_rejects_invalid_payloads_and_stale_session(site):
+    _, connect = site
+    alice, source, boris, _ = relay_pair(connect)
+    for bad in (None, [], {"kind": []}, audio_packet(source, epoch="old"),
+                audio_packet(source, channel_id=3), audio_packet(source, seq=True),
+                audio_packet(source, data="?" * 2560), audio_packet(source, data="x" * 3000),
+                audio_packet(source, data=base64.b64encode(b"short").decode()),
+                audio_packet(source, kind="screen", data=base64.b64encode(b"not-jpeg").decode())):
+        alice.emit("relay_publish", bad)
+    assert not media_packets(boris)
+    alice.emit("relay_publish", audio_packet(source, 1))
+    assert len(media_packets(boris)) == 1
+    alice.emit("relay_publish", audio_packet(source, 1))
+    assert not relay.outboxes[(source, next(iter(events.voice_rooms[2].keys() - {source})), "mic")]["queue"]
+
+
+def test_relay_slow_receiver_queue_is_bounded_and_ack_is_scoped(site, monkeypatch):
+    _, connect = site
+    alice, source, boris, target = relay_pair(connect)
+    now = [1000.0]
+    monkeypatch.setattr(relay.time, "monotonic", lambda: now[0])
+    alice.emit("relay_publish", audio_packet(source, 0))
+    delivery = media_packets(boris)[0]
+    for seq in range(1, 31):
+        now[0] += 0.04
+        alice.emit("relay_publish", audio_packet(source, seq))
+    box = relay.outboxes[(source, target, "mic")]
+    assert len(box["queue"]) == 6
+    assert not media_packets(boris)  # No accumulating sends to a stalled socket.
+    alice.emit("relay_ack", {"from": source, "kind": "mic", "id": delivery["id"]})
+    boris.emit("relay_ack", {"from": source, "kind": "mic", "id": delivery["id"] + 1})
+    assert not media_packets(boris)
+    boris.emit("relay_ack", {"from": source, "kind": "mic", "id": delivery["id"]})
+    batch = media_packets(boris)[0]
+    assert [p["seq"] for p in batch["packets"]] == list(range(25, 31))
+
+
+def test_relay_mute_and_moderation_are_enforced_on_server(site):
+    _, connect = site
+    alice, source, boris, target = relay_pair(connect)
+    boris.emit("voice_state", {"muted": True})
+    boris.emit("relay_publish", audio_packet(target))
+    assert not media_packets(alice)
+    boris.emit("voice_state", {"muted": False, "sharing": True})
+    alice.emit("mic_lock", {"active": True})
+    for kind in ("mic", "screen_audio"):
+        boris.emit("relay_publish", audio_packet(target, kind=kind))
+    assert not media_packets(alice)
+    alice.emit("voice_kick", {"user_id": 2, "ban": True})
+    assert target not in events.sid_voice and not relay.links and not relay.outboxes
+
+
+@pytest.mark.parametrize("change", ["membership", "ban", "channel"])
+def test_relay_rechecks_access_before_flushing_buffered_audio(site, change):
+    app, connect = site
+    alice, source, boris, target = relay_pair(connect)
+    alice.emit("relay_publish", audio_packet(source))
+    packet = media_packets(boris)[0]
+    alice.emit("relay_publish", audio_packet(source, 1))
+    with app.app_context():
+        if change == "membership":
+            db.session.delete(Membership.query.filter_by(room_id=1, user_id=2).one())
+        elif change == "ban":
+            db.session.get(User, 2).is_banned = True
+        else:
+            db.session.get(Channel, 2).kind = "text"
+        db.session.commit()
+    boris.emit("relay_ack", {"from": source, "kind": "mic", "id": packet["id"]})
+    assert not media_packets(boris)
+    alice.emit("relay_publish", audio_packet(source, 2))
+    assert not media_packets(boris)
+
+
+def test_relay_start_checks_permissions_capabilities_and_rate_limit(site, monkeypatch):
+    _, connect = site
+    _, alice, source = connect("alice")
+    _, boris, target = connect("boris")
+    _, outsider, _ = connect("outsider")
+    for ws in (alice, boris):
+        ws.emit("voice_join", {"channel_id": 2}, callback=True)
+    assert "error" in outsider.emit("relay_start", {"channel_id": 2, "to": source}, callback=True)
+    assert "error" in alice.emit("relay_start", {"channel_id": 2, "to": target}, callback=True)
+    for ws in (alice, boris):
+        ws.emit("voice_join", {"channel_id": 2, "relay_version": 1}, callback=True)
+    assert alice.emit("relay_start", {"channel_id": 2, "to": target}, callback=True)["ok"]
+    # An unready receiver gets no media.
+    alice.emit("relay_publish", audio_packet(source))
+    assert not media_packets(boris)
+    monkeypatch.setattr(relay.time, "monotonic", lambda: 1000.0)
+    assert sum(relay._accept_packet(source, "mic", audio_packet(source, seq)) for seq in range(100)) == 8

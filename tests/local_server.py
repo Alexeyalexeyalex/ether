@@ -1,5 +1,6 @@
 """Isolated local preview. Never opens the user's instance/efir.db."""
 import os
+import argparse
 from pathlib import Path
 import sys
 import tempfile
@@ -25,4 +26,13 @@ with app.app_context():
     db.session.commit()
 
 if __name__ == "__main__":
-    socketio.run(app, host="127.0.0.1", port=2080, allow_unsafe_werkzeug=True, use_reloader=False)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port', type=int, default=2080)
+    parser.add_argument('--ssl', action='store_true')
+    args = parser.parse_args()
+    context = None
+    if args.ssl:
+        from app.certs import ensure_certificate
+        context = ensure_certificate(['localhost', '127.0.0.1'])
+    socketio.run(app, host="127.0.0.1", port=args.port, ssl_context=context,
+                 allow_unsafe_werkzeug=True, use_reloader=False)

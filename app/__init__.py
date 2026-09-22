@@ -69,6 +69,7 @@ def create_app(debug: bool = False) -> Flask:
     app.register_blueprint(admin_bp)
 
     from . import events  # noqa: F401  (регистрирует обработчики Socket.IO)
+    from . import relay  # noqa: F401  (резервная передача медиа)
 
     socketio.init_app(app)
 

@@ -2,6 +2,7 @@
  *
  * Схема: полносвязная сетка (mesh). Каждый участник голосового канала держит
  * по одному RTCPeerConnection с каждым другим. Сервер только передаёт SDP и ICE.
+ * Если маршрут недоступен, конкретная пара переключается на server-relay.js.
  *
  * Важная деталь: в каждом соединении заранее создаются три дорожки в жёстком
  * порядке — микрофон (mid 0), звук экрана (mid 1), картинка экрана (mid 2).
@@ -24,6 +25,8 @@
   const signalQueues = new Map();
   const blockedAudio = new Set();
   let joinGeneration = 0;
+  let shareGeneration = 0;
+  let serverRelay = null;
 
   const QUALITY = {
     saver: {
@@ -54,6 +57,9 @@
     channelId: null,
     socket: null,
     selfSid: null,
+    voiceEpoch: null,
+    peerStates: {},
+    serverRelay: false,
     micStream: null,
     micEnabled: true,
     screenStream: null,
@@ -246,8 +252,9 @@
     refreshVolumes();
   };
 
-  function dropAudio(sid) {
+  function dropAudio(sid, kind) {
     audioBin().querySelectorAll('audio[data-sid="' + sid + '"]').forEach(function (el) {
+      if (kind && el.dataset.kind !== kind) return;
       detachBoost(el);
       dropReference(el);
       blockedAudio.delete(el);
@@ -351,7 +358,8 @@
     const peers = Array.from(RTC.peers.values());
     return {
       total: peers.length,
-      connected: peers.filter(function (p) { return p.pc.connectionState === 'connected'; }).length,
+      connected: peers.filter(function (p) { return p.relay ? p.relay.connected : p.pc.connectionState === 'connected'; }).length,
+      relayed: peers.filter(function (p) { return p.relay && p.relay.connected; }).length,
       failed: peers.some(function (p) { return p.exhausted; }),
       blockedAudio: blockedAudio.size > 0,
       hasTurn: RTC.hasTurn
@@ -365,7 +373,7 @@
   }
 
   async function restartPeer(peer) {
-    if (RTC.peers.get(peer.sid) !== peer || peer.pc.signalingState !== 'stable') return;
+    if (RTC.peers.get(peer.sid) !== peer || peer.relay || peer.pc.signalingState !== 'stable') return;
     if (peer.isOfferer) {
       const offer = await peer.pc.createOffer({ iceRestart: true });
       if (RTC.peers.get(peer.sid) !== peer) return;
@@ -377,10 +385,11 @@
   }
 
   function scheduleRecovery(peer, delay) {
-    if (peer.recoveryTimer || peer.exhausted) return;
+    if (peer.recoveryTimer || peer.exhausted || peer.relay) return;
     peer.recoveryTimer = setTimeout(function () {
       peer.recoveryTimer = null;
       if (RTC.peers.get(peer.sid) !== peer || peer.pc.connectionState === 'connected') return;
+      if (RTC.serverRelay && serverRelay) { requestRelay(peer); return; }
       if (peer.restarts >= 2) {
         peer.exhausted = true;
         RTC.lastError = RTC.hasTurn
@@ -396,21 +405,85 @@
     }, delay);
   }
 
+  function relayError(peer, message) {
+    if (RTC.peers.get(peer.sid) !== peer) return;
+    clearTimeout(peer.recoveryTimer);
+    peer.recoveryTimer = null;
+    peer.fallbackPending = false;
+    peer.exhausted = true;
+    RTC.lastError = message;
+    emit('notice', { level: 'error', text: message });
+    connectionChanged();
+  }
+
+  function requestRelay(peer) {
+    if (peer.fallbackPending || !RTC.channelId) return;
+    peer.fallbackPending = true;
+    clearTimeout(peer.recoveryTimer);
+    peer.recoveryTimer = setTimeout(function () {
+      if (!peer.relay || !peer.relay.connected) relayError(peer, 'Сервер не подтвердил резервное соединение. Нажмите «Повторить соединение» в диагностике.');
+    }, 12000);
+    RTC.socket.timeout(10000).emit('relay_start', { to: peer.sid, channel_id: RTC.channelId }, function (err, reply) {
+      if (RTC.peers.get(peer.sid) !== peer) return;
+      if (err || !reply || !reply.ok) relayError(peer, reply && reply.error || 'Резервная связь недоступна. Обновите страницу и попробуйте снова.');
+    });
+    connectionChanged();
+  }
+
+  async function activateRelay(data) {
+    if (data.channel_id !== RTC.channelId || data.epoch !== RTC.voiceEpoch) return;
+    const peer = createPeer(data.from, false);
+    if (!peer.relay || peer.relay.token !== data.token) {
+      clearTimeout(peer.recoveryTimer);
+      peer.recoveryTimer = null;
+      peer.pc.ontrack = null;
+      peer.pc.onicecandidate = null;
+      peer.pc.onconnectionstatechange = null;
+      peer.pc.close();
+      peer.micTx = peer.screenAudioTx = peer.videoTx = null;
+      if (peer.stopMeter) { peer.stopMeter(); peer.stopMeter = null; }
+      dropAudio(peer.sid);
+      emit('screen_off', { sid: peer.sid });
+      earlyIce.delete(peer.sid);
+      peer.pendingIce = [];
+      peer.relay = serverRelay.add(peer.sid, data.token);
+      peer.exhausted = false;
+      peer.recoveryTimer = setTimeout(function () {
+        if (!peer.relay.connected) relayError(peer, 'Не удалось включить резервное соединение. Обновите страницу участника.');
+      }, 12000);
+    }
+    const current = peer.relay;
+    try {
+      await serverRelay.prepare();
+      if (RTC.peers.get(peer.sid) !== peer || peer.relay !== current) return;
+      serverRelay.sharing(peer.sid, !!(RTC.peerStates[peer.sid] || {}).sharing);
+      RTC.socket.emit('relay_ready', { to: peer.sid, channel_id: RTC.channelId, token: data.token });
+    } catch (err) { relayError(peer, err.message); }
+    connectionChanged();
+  }
+
   RTC.reconnect = function () {
     RTC.lastError = '';
     RTC.peers.forEach(function (peer) {
-      if (peer.pc.connectionState === 'connected') return;
+      if (peer.relay ? peer.relay.connected : peer.pc.connectionState === 'connected') return;
       clearTimeout(peer.recoveryTimer);
       peer.recoveryTimer = null;
       peer.restarts = 0;
       peer.exhausted = false;
-      scheduleRecovery(peer, 0);
+      peer.fallbackPending = false;
+      if (RTC.serverRelay) requestRelay(peer);
+      else scheduleRecovery(peer, 0);
     });
     connectionChanged();
   };
 
   RTC.diagnostics = async function () {
     const peers = await Promise.all(Array.from(RTC.peers.values()).map(async function (peer) {
+      if (peer.relay) return {
+        userId: RTC.peerUsers[peer.sid], state: peer.relay.connected ? 'connected' : 'connecting',
+        failed: peer.exhausted, ice: 'closed', route: 'server', packets: peer.relay.packets,
+        energy: peer.relay.energy, frames: peer.relay.frames, rtt: null
+      };
       const stats = await peer.pc.getStats();
       const transport = Array.from(stats.values()).find(function (s) { return s.type === 'transport' && s.selectedCandidatePairId; });
       const pair = transport && stats.get(transport.selectedCandidatePairId);
@@ -426,7 +499,7 @@
     }));
     return { secure: window.isSecureContext, signaling: RTC.socket.connected,
       transport: RTC.socket.io.engine && RTC.socket.io.engine.transport.name,
-      hasTurn: RTC.hasTurn, microphone: RTC.hasMic(), muted: !RTC.micEnabled,
+      hasTurn: RTC.hasTurn, serverRelay: RTC.serverRelay, microphone: RTC.hasMic(), muted: !RTC.micEnabled,
       blockedAudio: blockedAudio.size > 0, peers: peers, lastError: RTC.lastError };
   };
 
@@ -475,7 +548,7 @@
     };
 
     pc.onconnectionstatechange = function () {
-      if (RTC.peers.get(sid) !== peer) return;
+      if (RTC.peers.get(sid) !== peer || peer.relay) return;
       if (pc.connectionState === 'connected') {
         clearTimeout(peer.recoveryTimer);
         peer.recoveryTimer = null;
@@ -495,7 +568,9 @@
       if (track.kind === 'video') {
         const stream = event.streams[0] || new MediaStream([track]);
         emit('screen', { sid: sid, stream: stream, track: track });
-        track.onended = function () { emit('screen_off', { sid: sid }); };
+        track.onended = function () {
+          if (!peer.relay && RTC.peers.get(sid) === peer) emit('screen_off', { sid: sid });
+        };
         return;
       }
 
@@ -516,7 +591,7 @@
       preferCodec(peer.videoTx);
     }
 
-    scheduleRecovery(peer, 16000);
+    scheduleRecovery(peer, RTC.hasTurn ? 16000 : 8000);
     connectionChanged();
     return peer;
   }
@@ -549,7 +624,9 @@
 
   async function offerTo(sid) {
     const peer = createPeer(sid, true);
+    if (peer.relay) return;
     const offer = await peer.pc.createOffer();
+    if (peer.relay || RTC.peers.get(sid) !== peer) return;
     await peer.pc.setLocalDescription(offer);
     if (RTC.peers.get(sid) !== peer) return;
     sendSignal(sid, { type: 'offer', sdp: peer.pc.localDescription });
@@ -559,11 +636,14 @@
   async function handleSignal(from, payload) {
     if (!payload || !RTC.channelId) return;
     let peer = RTC.peers.get(from);
+    if (peer && peer.relay) return;
 
     if (payload.type === 'offer') {
       if (!peer) peer = createPeer(from, false);
       await peer.pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+      if (peer.relay || RTC.peers.get(from) !== peer) return;
       await bindAnswererTransceivers(peer);
+      if (peer.relay || RTC.peers.get(from) !== peer) return;
       const answer = await peer.pc.createAnswer();
       await peer.pc.setLocalDescription(answer);
       sendSignal(from, { type: 'answer', sdp: peer.pc.localDescription });
@@ -616,6 +696,7 @@
     if (!peer) return;
     if (peer.stopMeter) peer.stopMeter();
     clearTimeout(peer.recoveryTimer);
+    if (serverRelay) serverRelay.remove(sid);
     try { peer.pc.close(); } catch (err) { /* уже закрыто */ }
     RTC.peers.delete(sid);
     dropAudio(sid);
@@ -916,6 +997,7 @@
       const config = await response.json();
       ICE_CONFIG = { iceServers: config.iceServers, iceCandidatePoolSize: 0 };
       RTC.hasTurn = config.hasTurn;
+      RTC.serverRelay = !!config.serverRelay && !!serverRelay;
       if (generation !== joinGeneration) throw new Error('Подключение отменено');
     try {
       const raw = await grabMic();
@@ -944,7 +1026,7 @@
     }
 
     await new Promise(function (resolve, reject) {
-      RTC.socket.timeout(10000).emit('voice_join', { channel_id: channelId, muted: !RTC.micEnabled }, function (err, reply) {
+      RTC.socket.timeout(10000).emit('voice_join', { channel_id: channelId, muted: !RTC.micEnabled, relay_version: RTC.serverRelay ? 1 : 0 }, function (err, reply) {
         if (generation !== joinGeneration) { reject(new Error('Подключение отменено')); return; }
         if (err) { reject(new Error('Сервер не подтвердил вход в голосовой канал. Попробуйте ещё раз.')); return; }
         if (!reply || !reply.ok) { reject(new Error(reply && reply.error || 'Вход в канал не подтверждён')); return; }
@@ -985,6 +1067,7 @@
     if (RTC.stopLocalMeter) { RTC.stopLocalMeter(); RTC.stopLocalMeter = null; }
     if (!RTC.micAnalyser) RTC.stopLocalMeter = watchLevel('self', stream);
     RTC.socket.emit('voice_state', { muted: false });
+    if (serverRelay) serverRelay.refresh();
     return true;
   };
 
@@ -994,6 +1077,7 @@
     signalQueues.clear();
     RTC.peers.forEach(function (_peer, sid) { closePeer(sid); });
     RTC.peers.clear();
+    if (serverRelay) serverRelay.reset();
 
     if (RTC.stopLocalMeter) { RTC.stopLocalMeter(); RTC.stopLocalMeter = null; }
     [RTC.rawMicStream, RTC.micStream].forEach(function (stream) {
@@ -1014,6 +1098,8 @@
     if (RTC.channelId && RTC.socket) RTC.socket.emit('voice_leave', {});
     RTC.channelId = null;
     RTC.selfSid = null;
+    RTC.voiceEpoch = null;
+    RTC.peerStates = {};
     RTC.peerUsers = {};
     RTC.micEnabled = false;
     emit('playback', { blocked: false });
@@ -1039,6 +1125,9 @@
   // ------------------------------------------------------------- экран
 
   RTC.startShare = async function () {
+    if (!RTC.channelId) throw new Error('Сначала зайдите в голосовой канал.');
+    const generation = joinGeneration;
+    const share = ++shareGeneration;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       throw new Error('Браузер не умеет захватывать экран. Нужен localhost или HTTPS.');
     }
@@ -1071,6 +1160,10 @@
     };
 
     const stream = await navigator.mediaDevices.getDisplayMedia(request);
+    if (generation !== joinGeneration || share !== shareGeneration || !RTC.channelId) {
+      stream.getTracks().forEach(function (track) { track.stop(); });
+      throw new DOMException('Трансляция отменена', 'AbortError');
+    }
 
     RTC.screenStream = stream;
     RTC.screenTrack = stream.getVideoTracks()[0];
@@ -1096,6 +1189,7 @@
     }
 
     RTC.socket.emit('voice_state', { sharing: true, quality: RTC.quality });
+    if (serverRelay) serverRelay.refresh();
     emit('share_started', { stream: stream });
     return stream;
   };
@@ -1185,6 +1279,7 @@
   RTC.hasScreenAudio = function () { return !!RTC.screenAudioTrack; };
 
   RTC.stopShare = function (silent) {
+    shareGeneration += 1;
     if (!RTC.screenStream) return;
 
     RTC.peers.forEach(function (peer) {
@@ -1201,6 +1296,7 @@
     RTC.screenAudioTrack = null;
     RTC.screenAudioRaw = null;
     RTC.screenSurface = null;
+    if (serverRelay) serverRelay.refresh();
 
     if (!silent && RTC.socket) RTC.socket.emit('voice_state', { sharing: false });
     emit('share_stopped', {});
@@ -1212,15 +1308,51 @@
 
   RTC.attach = function (socket) {
     RTC.socket = socket;
+    if (global.ServerRelay) serverRelay = new global.ServerRelay({
+      socket: socket, context: ensureCtx, channel: function () { return RTC.channelId; },
+      epoch: function () { return RTC.voiceEpoch; }, micEnabled: function () { return RTC.micEnabled; },
+      quality: function () { return RTC.quality; },
+      sources: function () { return { mic: RTC.micStream && RTC.micStream.getAudioTracks()[0],
+        screen_audio: RTC.screenAudioTrack, screen: RTC.screenTrack }; },
+      audio: function (sid, kind, track) {
+        playTrack(sid, kind, track);
+        const peer = RTC.peers.get(sid);
+        if (kind === 'mic' && peer && !peer.stopMeter) peer.stopMeter = watchLevel(sid, new MediaStream([track]));
+      },
+      audioOff: dropAudio,
+      screen: function (sid, stream) { emit('screen', { sid: sid, stream: stream, track: stream.getVideoTracks()[0] }); },
+      screenOff: function (sid) { emit('screen_off', { sid: sid }); },
+      error: function (message) {
+        if (RTC.lastError !== message) emit('notice', { level: 'error', text: message });
+        RTC.lastError = message;
+      }
+    });
+
+    socket.on('relay_started', function (data) { if (RTC.serverRelay) activateRelay(data); });
+    socket.on('relay_connected', function (data) {
+      if (data.channel_id !== RTC.channelId || data.epoch !== RTC.voiceEpoch) return;
+      const peer = RTC.peers.get(data.from);
+      if (!peer || !peer.relay || peer.relay.token !== data.token) return;
+      serverRelay.connect(data.from, data.token);
+      clearTimeout(peer.recoveryTimer);
+      peer.recoveryTimer = null;
+      peer.fallbackPending = false;
+      peer.exhausted = false;
+      RTC.lastError = '';
+      connectionChanged();
+    });
 
     socket.on('voice_joined', function (data) {
       if (data.channel_id !== RTC.channelId) return;
       RTC.selfSid = data.self_sid;
+      RTC.voiceEpoch = data.epoch;
       data.peers.forEach(function (peer) {
         RTC.peerUsers[peer.sid] = peer.user_id;
+        RTC.peerStates[peer.sid] = peer;
       });
       data.peers.forEach(function (peer) {
         offerTo(peer.sid).catch(function (err) {
+          if (!RTC.channelId || (RTC.peers.get(peer.sid) || {}).relay) return;
           console.error('offer', err);
           RTC.lastError = 'Не удалось начать голосовое соединение: ' + err.message;
           emit('notice', { level: 'error', text: RTC.lastError });
@@ -1232,6 +1364,7 @@
     socket.on('peer_joined', function (data) {
       if (data.channel_id !== RTC.channelId) return;
       RTC.peerUsers[data.peer.sid] = data.peer.user_id;
+      RTC.peerStates[data.peer.sid] = data.peer;
       audioBin().querySelectorAll('audio').forEach(function (el) {
         if (el.dataset.sid === data.peer.sid) el.dataset.user = String(data.peer.user_id);
       });
@@ -1243,7 +1376,14 @@
       if (data.channel_id !== RTC.channelId) return;
       closePeer(data.sid);
       delete RTC.peerUsers[data.sid];
+      delete RTC.peerStates[data.sid];
       emit('peer_left', data);
+    });
+
+    socket.on('peer_update', function (data) {
+      if (data.channel_id !== RTC.channelId) return;
+      RTC.peerStates[data.peer.sid] = data.peer;
+      if (serverRelay) serverRelay.sharing(data.peer.sid, data.peer.sharing);
     });
 
     socket.on('signal', function (data) {
@@ -1251,10 +1391,10 @@
       const generation = joinGeneration;
       const previous = signalQueues.get(data.from) || Promise.resolve();
       const next = previous.then(function () {
-        if (generation !== joinGeneration) return;
+        if (generation !== joinGeneration || (RTC.peers.get(data.from) || {}).relay) return;
         return handleSignal(data.from, data.payload);
       }).catch(function (err) {
-        if (generation !== joinGeneration) return;
+        if (generation !== joinGeneration || (RTC.peers.get(data.from) || {}).relay) return;
         console.error('signal', err);
         RTC.lastError = 'Ошибка голосового соединения: ' + err.message;
         emit('notice', { level: 'error', text: RTC.lastError });

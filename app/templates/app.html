@@ -474,6 +474,7 @@
     <h2>Качество картинки</h2>
     <p class="sub">Меняется на лету — переключать можно прямо во время показа.</p>
 
+    <p class="hint" id="relay-quality-note" hidden>Для участников с резервным соединением экран передаётся через сервер: до 1280×720 и 5 кадров/с. «Экономный» — до 960×540.</p>
     <div class="quality-list" id="quality-list"></div>
 
     <div class="field" style="margin-top:22px">
@@ -499,6 +500,7 @@
 
 <script>window.ME = {{ me | tojson }};</script>
 <script src="{{ url_for('static', filename='vendor/socket.io.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/server-relay.js') }}"></script>
 <script src="{{ url_for('static', filename='js/rtc.js') }}"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
